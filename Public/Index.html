@@ -1,104 +1,168 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Ditto</title>
-    <style>
-        body { font-family: Arial, sans-serif; text-align: center; }
-        #board { display: grid; grid-template-columns: repeat(5, 50px); gap: 5px; margin: 20px auto; width: 300px; }
-        .tile { width: 50px; height: 50px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
-        .selected { background: #aaffaa; }
-        #scores, #messages { margin: 20px; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ditto</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background-color: #f0f0f0;
+    }
+    #playerInfo, #wordDisplay, #scores, #messages {
+      margin: 10px 0;
+      font-size: 18px;
+    }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(5, 50px);
+      gap: 5px;
+      margin: 20px auto;
+      width: 300px;
+    }
+    .tile {
+      width: 50px;
+      height: 50px;
+      background: #f0f0f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .tile:hover {
+      background-color: #ddd;
+    }
+    .selected {
+      background: #aaffaa;
+    }
+    #submitWord {
+      padding: 5px 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+  </style>
 </head>
 <body>
-    <h1>Ditto</h1>
-    <div id="board"></div>
-    <button onclick="submitWord()">Submit Word</button>
-    <div id="word"></div>
-    <div id="scores"></div>
-    <div id="messages"></div>
+  <h1>Ditto</h1>
+  <div id="playerInfo">Waiting for players...</div>
+  <div id="wordDisplay">Word: <span id="currentWord"></span></div>
+  <div id="board"></div>
+  <button id="submitWord">Submit Word</button>
+  <div id="scores"></div>
+  <div id="messages"></div>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script>
-        const socket = io();
-        const boardDiv = document.getElementById('board');
-        const wordDiv = document.getElementById('word');
-        const scoresDiv = document.getElementById('scores');
-        const messagesDiv = document.getElementById('messages');
-        let selected = [];
-        let board = [];
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
+    const boardDiv = document.getElementById('board');
+    const wordDisplay = document.getElementById('currentWord');
+    const scoresDiv = document.getElementById('scores');
+    const messagesDiv = document.getElementById('messages');
+    const playerInfoDiv = document.getElementById('playerInfo');
+    let selected = [];
+    let board = Array(5).fill().map(() => Array(5).fill(''));
+    let playerId = null;
 
-        socket.emit('joinGame');
+    // Initialize the 5x5 game board
+    for (let i = 0; i < 5; i++) {
+      for (let j = 0; j < 5; j++) {
+        const tile = document.createElement('div');
+        tile.classList.add('tile');
+        tile.dataset.row = i;
+        tile.dataset.col = j;
+        tile.addEventListener('click', () => selectTile(i, j));
+        boardDiv.appendChild(tile);
+      }
+    }
 
-        socket.on('gameState', (data) => {
-            board = data.board;
-            renderBoard();
-            updateScores(data.players);
-        });
+    // Socket.IO event listeners
+    socket.on('playerId', (id) => {
+      playerId = id;
+      playerInfoDiv.textContent = `Your ID: ${id}`;
+    });
 
-        socket.on('startGame', () => messagesDiv.innerHTML += '<p>Game Started!</p>');
+    socket.on('players', (players) => {
+      playerInfoDiv.textContent = `Players: ${players.length}/2`;
+    });
 
-        socket.on('wordResult', (data) => {
-            if (data.valid) {
-                messagesDiv.innerHTML += `<p>${data.playerId} played "${data.word}" for ${data.points} points</p>`;
-                updateScores(data.scores);
-            } else {
-                messagesDiv.innerHTML += `<p>Invalid word: ${data.word}</p>`;
-            }
-            selected = [];
-            renderBoard();
-        });
+    socket.on('gameStart', (data) => {
+      wordDisplay.textContent = data.word;
+      playerInfoDiv.textContent += ` | Current Player: ${data.currentPlayer}`;
+      messagesDiv.innerHTML += '<p>Game Started!</p>';
+    });
 
-        socket.on('gameOver', (data) => {
-            const winner = data.winner === 'draw' ? 'Draw!' : `${data.winner} wins!`;
-            messagesDiv.innerHTML += `<p>Game Over! ${winner}</p>`;
-            data.scores.forEach(p => messagesDiv.innerHTML += `<p>${p.id}: ${p.score} points, ${p.rankPoints} rank</p>`);
-        });
+    socket.on('updateBoard', (newBoard) => {
+      board = newBoard;
+      renderBoard();
+    });
 
-        socket.on('playerLeft', () => {
-            messagesDiv.innerHTML += '<p>Opponent disconnected. Game ended.</p>';
-        });
+    socket.on('updateScores', (scores) => {
+      scoresDiv.innerHTML = '<h3>Scores:</h3>';
+      for (const [id, score] of Object.entries(scores)) {
+        scoresDiv.innerHTML += `<p>${id}: ${score}</p>`;
+      }
+    });
 
-        function renderBoard() {
-            boardDiv.innerHTML = '';
-            board.forEach((row, r) => {
-                row.forEach((letter, c) => {
-                    const tile = document.createElement('div');
-                    tile.className = 'tile';
-                    tile.textContent = letter;
-                    if (selected.some(([sr, sc]) => sr === r && sc === c)) tile.className += ' selected';
-                    tile.onclick = () => selectTile(r, c);
-                    boardDiv.appendChild(tile);
-                });
-            });
-            wordDiv.textContent = selected.map(([r, c]) => board[r][c]).join('');
+    socket.on('nextTurn', (data) => {
+      wordDisplay.textContent = data.word;
+      playerInfoDiv.textContent = `Players: 2/2 | Current Player: ${data.currentPlayer}`;
+      board = data.board;
+      selected = [];
+      renderBoard();
+      messagesDiv.innerHTML += `<p>${playerId === data.currentPlayer ? 'Your turn!' : 'Opponent\'s turn!'}</p>`;
+    });
+
+    socket.on('gameFull', () => {
+      messagesDiv.innerHTML += '<p>Game is full!</p>';
+    });
+
+    socket.on('gameEnd', () => {
+      playerInfoDiv.textContent = 'Game ended. Waiting for players...';
+      wordDisplay.textContent = '';
+      scoresDiv.innerHTML = '';
+      messagesDiv.innerHTML += '<p>Opponent disconnected. Game ended.</p>';
+      board = Array(5).fill().map(() => Array(5).fill(''));
+      selected = [];
+      renderBoard();
+    });
+
+    function renderBoard() {
+      const tiles = document.querySelectorAll('.tile');
+      tiles.forEach(tile => {
+        const row = parseInt(tile.dataset.row);
+        const col = parseInt(tile.dataset.col);
+        tile.textContent = board[row][col];
+        tile.className = 'tile';
+        if (selected.some(([sr, sc]) => sr === row && sc === col)) {
+          tile.className += ' selected';
         }
+      });
+    }
 
-        function selectTile(r, c) {
-            if (selected.length && !isAdjacent(selected[selected.length - 1], [r, c])) return;
-            const idx = selected.findIndex(([sr, sc]) => sr === r && sc === c);
-            if (idx !== -1) selected.splice(idx); // Deselect if already selected
-            else selected.push([r, c]);
-            renderBoard();
-        }
+    function selectTile(r, c) {
+      if (selected.length && !isAdjacent(selected[selected.length - 1], [r, c])) return;
+      const idx = selected.findIndex(([sr, sc]) => sr === r && sc === c);
+      if (idx !== -1) selected.splice(idx); // Deselect if already selected
+      else selected.push([r, c]);
+      renderBoard();
+    }
 
-        function isAdjacent([r1, c1], [r2, c2]) {
-            return Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1;
-        }
+    function isAdjacent([r1, c1], [r2, c2]) {
+      return Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1;
+    }
 
-        function submitWord() {
-            const word = selected.map(([r, c]) => board[r][c]).join('');
-            if (word.length >= 3) socket.emit('submitWord', { word, path: selected });
-            selected = [];
-            renderBoard();
-        }
+    function submitWord() {
+      const word = selected.map(([r, c]) => board[r][c]).join('');
+      if (word.length >= 3) {
+        socket.emit('submitWord', word);
+      }
+      selected = [];
+      renderBoard();
+    }
 
-        function updateScores(scores) {
-            scoresDiv.innerHTML = '<h3>Scores:</h3>' + scores.map(p => `<p>${p.id}: ${p.score}</p>`).join('');
-        }
-
-        // End game manually (for testing)
-        document.addEventListener('keydown', (e) => { if (e.key === 'e') socket.emit('endGame'); });
-    </script>
+    document.getElementById('submitWord').addEventListener('click', submitWord);
+  </script>
 </body>
 </html>
