@@ -1,78 +1,93 @@
 const express = require('express');
 const http = require('http');
-const socketIo = require('socket.io');
+const socketIO = require('socket.io');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+const io = socketIO(server);
 
 const PORT = process.env.PORT || 3000;
 
 // Simple word bank
 const words = ['apple', 'banana', 'cherry', 'dragon', 'elephant'];
 let currentWord = '';
-let players = {};
+let players = [];
+let gameState = {
+  board: Array(5).fill().map(() => Array(5).fill('')),
+  scores: {},
+  currentPlayer: null
+};
 
-// Serve static files (client-side)
+// Serve static files from the 'public' directory
 app.use(express.static('public'));
 
-// Choose a random word
+// Serve the main page
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/public/index.html');
+});
+
+// Choose a random word from the list
 function getRandomWord() {
-    return words[Math.floor(Math.random() * words.length)];
+  return words[Math.floor(Math.random() * words.length)];
 }
 
 // Handle socket connections
 io.on('connection', (socket) => {
-    console.log('A player connected:', socket.id);
+  console.log('A user connected:', socket.id);
 
-    // Add new player
-    players[socket.id] = { score: 0 };
-    
-    // Send current word to new player (hidden)
-    if (!currentWord) {
-        currentWord = getRandomWord();
+  // Add new player
+  if (players.length < 2) {
+    players.push(socket.id);
+    gameState.scores[socket.id] = 0;
+    socket.emit('playerId', socket.id);
+    io.emit('players', players);
+
+    // Start game when two players are connected
+    if (players.length === 2) {
+      gameState.currentPlayer = players[0];
+      currentWord = getRandomWord();
+      io.emit('gameStart', { word: currentWord, currentPlayer: gameState.currentPlayer });
     }
-    socket.emit('gameState', {
-        word: currentWord.split('').map(() => '_').join(' '),
-        players: players
-    });
+  } else {
+    socket.emit('gameFull');
+    socket.disconnect();
+    return;
+  }
 
-    // Broadcast new player to all
-    io.emit('playerUpdate', players);
+  // Handle tile click
+  socket.on('tileClick', (data) => {
+    const { row, col, letter } = data;
+    if (socket.id === gameState.currentPlayer) {
+      gameState.board[row][col] = letter;
+      io.emit('updateBoard', gameState.board);
+    }
+  });
 
-    // Handle guess
-    socket.on('guess', (guess) => {
-        guess = guess.toLowerCase().trim();
-        const response = {
-            correct: false,
-            word: currentWord.split('').map(() => '_').join(' ')
-        };
+  // Handle word submission
+  socket.on('submitWord', (submittedWord) => {
+    if (socket.id === gameState.currentPlayer && submittedWord === currentWord) {
+      gameState.scores[socket.id] += submittedWord.length;
+      io.emit('updateScores', gameState.scores);
 
-        if (guess === currentWord) {
-            response.correct = true;
-            players[socket.id].score += 10;
-            currentWord = getRandomWord();
-            response.word = currentWord.split('').map(() => '_').join(' ');
-        }
+      // Switch player
+      gameState.currentPlayer = players[players.indexOf(gameState.currentPlayer) + 1] || players[0];
+      currentWord = getRandomWord();
+      gameState.board = Array(5).fill().map(() => Array(5).fill(''));
+      io.emit('nextTurn', { word: currentWord, currentPlayer: gameState.currentPlayer, board: gameState.board });
+    }
+  });
 
-        // Broadcast to all players
-        io.emit('guessResult', {
-            playerId: socket.id,
-            guess: guess,
-            response: response,
-            players: players
-        });
-    });
-
-    // Handle disconnect
-    socket.on('disconnect', () => {
-        console.log('Player disconnected:', socket.id);
-        delete players[socket.id];
-        io.emit('playerUpdate', players);
-    });
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log('A user disconnected:', socket.id);
+    players = players.filter(id => id !== socket.id);
+    delete gameState.scores[socket.id];
+    io.emit('players', players);
+    if (players.length < 2) {
+      gameState.currentPlayer = null;
+      io.emit('gameEnd');
+    }
+  });
 });
 
-server.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-});
-
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
