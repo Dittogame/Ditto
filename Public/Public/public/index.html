@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Word Guess Multiplayer</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #players { margin: 20px; }
+        #word { font-size: 2em; margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Word Guessing Game</h1>
+    <div id="word"></div>
+    <input type="text" id="guessInput" placeholder="Enter your guess">
+    <button onclick="sendGuess()">Guess</button>
+    <div id="messages"></div>
+    <div id="players"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const guessInput = document.getElementById('guessInput');
+        const wordDiv = document.getElementById('word');
+        const messagesDiv = document.getElementById('messages');
+        const playersDiv = document.getElementById('players');
+
+        // Receive initial game state
+        socket.on('gameState', (data) => {
+            wordDiv.textContent = data.word;
+            updatePlayers(data.players);
+        });
+
+        // Handle guess results
+        socket.on('guessResult', (data) => {
+            wordDiv.textContent = data.response.word;
+            const msg = `${data.playerId} guessed "${data.guess}" - ${data.response.correct ? 'Correct!' : 'Wrong'}`;
+            messagesDiv.innerHTML += `<p>${msg}</p>`;
+            updatePlayers(data.players);
+            if (data.response.correct) messagesDiv.innerHTML = ''; // Clear messages on correct guess
+        });
+
+        // Update player list
+        socket.on('playerUpdate', (players) => {
+            updatePlayers(players);
+        });
+
+        function updatePlayers(players) {
+            playersDiv.innerHTML = '<h3>Players:</h3>';
+            for (let id in players) {
+                playersDiv.innerHTML += `<p>${id}: ${players[id].score} points</p>`;
+            }
+        }
+
+        function sendGuess() {
+            const guess = guessInput.value;
+            if (guess) {
+                socket.emit('guess', guess);
+                guessInput.value = '';
+            }
+        }
+
+        // Allow enter key to submit guess
+        guessInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendGuess();
+        });
+    </script>
+</body>
+</html>
