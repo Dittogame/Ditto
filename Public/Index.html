@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ditto</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; }
+        #board { display: grid; grid-template-columns: repeat(5, 50px); gap: 5px; margin: 20px auto; width: 300px; }
+        .tile { width: 50px; height: 50px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+        .selected { background: #aaffaa; }
+        #scores, #messages { margin: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Ditto</h1>
+    <div id="board"></div>
+    <button onclick="submitWord()">Submit Word</button>
+    <div id="word"></div>
+    <div id="scores"></div>
+    <div id="messages"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const boardDiv = document.getElementById('board');
+        const wordDiv = document.getElementById('word');
+        const scoresDiv = document.getElementById('scores');
+        const messagesDiv = document.getElementById('messages');
+        let selected = [];
+        let board = [];
+
+        socket.emit('joinGame');
+
+        socket.on('gameState', (data) => {
+            board = data.board;
+            renderBoard();
+            updateScores(data.players);
+        });
+
+        socket.on('startGame', () => messagesDiv.innerHTML += '<p>Game Started!</p>');
+
+        socket.on('wordResult', (data) => {
+            if (data.valid) {
+                messagesDiv.innerHTML += `<p>${data.playerId} played "${data.word}" for ${data.points} points</p>`;
+                updateScores(data.scores);
+            } else {
+                messagesDiv.innerHTML += `<p>Invalid word: ${data.word}</p>`;
+            }
+            selected = [];
+            renderBoard();
+        });
+
+        socket.on('gameOver', (data) => {
+            const winner = data.winner === 'draw' ? 'Draw!' : `${data.winner} wins!`;
+            messagesDiv.innerHTML += `<p>Game Over! ${winner}</p>`;
+            data.scores.forEach(p => messagesDiv.innerHTML += `<p>${p.id}: ${p.score} points, ${p.rankPoints} rank</p>`);
+        });
+
+        socket.on('playerLeft', () => {
+            messagesDiv.innerHTML += '<p>Opponent disconnected. Game ended.</p>';
+        });
+
+        function renderBoard() {
+            boardDiv.innerHTML = '';
+            board.forEach((row, r) => {
+                row.forEach((letter, c) => {
+                    const tile = document.createElement('div');
+                    tile.className = 'tile';
+                    tile.textContent = letter;
+                    if (selected.some(([sr, sc]) => sr === r && sc === c)) tile.className += ' selected';
+                    tile.onclick = () => selectTile(r, c);
+                    boardDiv.appendChild(tile);
+                });
+            });
+            wordDiv.textContent = selected.map(([r, c]) => board[r][c]).join('');
+        }
+
+        function selectTile(r, c) {
+            if (selected.length && !isAdjacent(selected[selected.length - 1], [r, c])) return;
+            const idx = selected.findIndex(([sr, sc]) => sr === r && sc === c);
+            if (idx !== -1) selected.splice(idx); // Deselect if already selected
+            else selected.push([r, c]);
+            renderBoard();
+        }
+
+        function isAdjacent([r1, c1], [r2, c2]) {
+            return Math.abs(r1 - r2) <= 1 && Math.abs(c1 - c2) <= 1;
+        }
+
+        function submitWord() {
+            const word = selected.map(([r, c]) => board[r][c]).join('');
+            if (word.length >= 3) socket.emit('submitWord', { word, path: selected });
+            selected = [];
+            renderBoard();
+        }
+
+        function updateScores(scores) {
+            scoresDiv.innerHTML = '<h3>Scores:</h3>' + scores.map(p => `<p>${p.id}: ${p.score}</p>`).join('');
+        }
+
+        // End game manually (for testing)
+        document.addEventListener('keydown', (e) => { if (e.key === 'e') socket.emit('endGame'); });
+    </script>
+</body>
+</html>
